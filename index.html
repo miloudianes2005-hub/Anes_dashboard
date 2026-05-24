@@ -890,6 +890,7 @@ window.renderGymPhotos = () => {
   }
 
   function renderTodayWorkout() {
+    gymState = loadGymState();
     const todayStr = getActiveDateString();
     const todaySets = [];
     Object.keys(gymState.logs).forEach(exId => {
@@ -916,6 +917,7 @@ window.renderGymPhotos = () => {
   }
 
   function renderAll() {
+    gymState = loadGymState();
     renderFilters();
     renderSelect();
     renderReps();
@@ -1613,10 +1615,9 @@ setInterval(updateDayBar, 60000);
     loadToday();
     loadTomorrow();
     
-    // Refresh Gym UI
-    if (typeof loadGymState === 'function') gymState = loadGymState();
-    if (typeof renderAll === 'function') renderAll();
-    if (typeof wtRender === 'function') wtRender();
+    // Refresh Gym UI using exposed global wrappers
+    if (typeof window.renderGymAll === 'function') window.renderGymAll();
+    if (typeof window.renderGymWt === 'function') window.renderGymWt();
 
     window.dispatchEvent(new CustomEvent('goals-changed'));
   };
@@ -1674,7 +1675,13 @@ setInterval(updateDayBar, 60000);
 
   // Sync logic
   document.addEventListener('focusin', (e) => {
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) isTyping = true;
+    const el = e.target;
+    // Only consider text-entry inputs for typing protection to avoid blocking checkbox syncs
+    const isText = (el.tagName === 'INPUT' && ['text', 'number', 'email', 'search', 'tel', 'url', 'password'].includes(el.type)) ||
+                   el.tagName === 'TEXTAREA' ||
+                   el.tagName === 'SELECT' ||
+                   el.isContentEditable;
+    if (isText) isTyping = true;
   });
   document.addEventListener('focusout', () => {
     isTyping = false;
