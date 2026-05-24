@@ -1730,9 +1730,17 @@ setInterval(updateDayBar, 60000);
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_state', filter: `key=eq.${APP_KEY}` }, 
       (payload) => {
         const newState = payload.new.data;
-        if (JSON.stringify(newState) === lastSyncedJson) return;
-        // Ignore remote updates if user is typing OR if a local change just happened (2s cooldown)
-        if (isTyping || (Date.now() - lastLocalChangeTime < 2000)) pendingRemote = newState;
+        const newStateJson = JSON.stringify(newState);
+        if (newStateJson === lastSyncedJson) return;
+        // Echo check: If remote state matches local state exactly, ignore it
+        if (newStateJson === JSON.stringify(getLocalState())) return;
+
+        if (isTyping) {
+          pendingRemote = newState;
+        } else if (Date.now() - lastLocalChangeTime < 2000) {
+          // During cooldown, discard remote updates to prevent clobbering recent local clicks
+          return;
+        }
         else applyState(newState);
       })
       .subscribe();
