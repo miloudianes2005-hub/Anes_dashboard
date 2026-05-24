@@ -1586,6 +1586,8 @@ setInterval(updateDayBar, 60000);
   let lastSyncedJson = '';
   let pendingRemote = null;
   let isTyping = false;
+  let isApplyingRemote = false;
+  let lastLocalChangeTime = 0;
 
   const SYNC_KEYS = ['goals:', 'goal_streak_v1', 'po_coach_v1', 'po_coach_weights', 'po_coach_photos', 'po_coach_workout_done'];
 
@@ -1605,9 +1607,20 @@ setInterval(updateDayBar, 60000);
     if (!state) return;
     const json = JSON.stringify(state);
     if (json === lastSyncedJson) return;
-    
+
+    isApplyingRemote = true;
+    // Sync deletions: remove local keys that are no longer in the remote state
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && SYNC_KEYS.some(sk => k.startsWith(sk)) && !(k in state)) {
+        localStorage.removeItem(k);
+      }
+    }
+
+    // Sync updates and additions
     Object.entries(state).forEach(([k, v]) => localStorage.setItem(k, v));
     lastSyncedJson = json;
+    isApplyingRemote = false;
     
     // Refresh UI
     processRollover();
@@ -1661,16 +1674,26 @@ setInterval(updateDayBar, 60000);
   const originalSetItem = localStorage.setItem;
   localStorage.setItem = function(key, value) {
     originalSetItem.apply(this, arguments);
-    const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
-    if (isSyncKey) schedulePush();
-    if (key.startsWith('goals:')) window.dispatchEvent(new CustomEvent('goals-changed'));
+    if (!isApplyingRemote) {
+      const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
+      if (isSyncKey) {
+        lastLocalChangeTime = Date.now();
+        schedulePush();
+      }
+      if (key.startsWith('goals:')) window.dispatchEvent(new CustomEvent('goals-changed'));
+    }
   };
 
   const originalRemoveItem = localStorage.removeItem;
   localStorage.removeItem = function(key) {
     originalRemoveItem.apply(this, arguments);
-    const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
-    if (isSyncKey) schedulePush();
+    if (!isApplyingRemote) {
+      const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
+      if (isSyncKey) {
+        lastLocalChangeTime = Date.now();
+        schedulePush();
+      }
+    }
   };
 
   // Sync logic
@@ -1708,7 +1731,8 @@ setInterval(updateDayBar, 60000);
       (payload) => {
         const newState = payload.new.data;
         if (JSON.stringify(newState) === lastSyncedJson) return;
-        if (isTyping) pendingRemote = newState;
+        // Ignore remote updates if user is typing OR if a local change just happened (2s cooldown)
+        if (isTyping || (Date.now() - lastLocalChangeTime < 2000)) pendingRemote = newState;
         else applyState(newState);
       })
       .subscribe();
