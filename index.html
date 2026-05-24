@@ -664,8 +664,8 @@ const GYM_CONFIG = {
 };
 
 /** SUPABASE INITIALIZATION */
-const SUPABASE_URL = 'PASTE_YOUR_SUPABASE_PROJECT_URL_HERE';
-const SUPABASE_ANON_KEY = 'PASTE_YOUR_FULL_SUPABASE_ANON_KEY_HERE';
+const SUPABASE_URL = 'https://djhgsyqeogxqtnqxmiuy.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqaGdzeXFlb2d4cXRucXhtaXV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1MzAzNTcsImV4cCI6MjA5NTEwNjM1N30.UNbaHjeIOt6tytnSBNfeetZZFCqG-ZrwPlr-6sMvf6Y';
 
 let supabaseClient = null;
 if (typeof window.supabase !== 'undefined' && SUPABASE_ANON_KEY !== 'PASTE_YOUR_FULL_SUPABASE_ANON_KEY_HERE') {
@@ -1585,11 +1585,14 @@ setInterval(updateDayBar, 60000);
   let pendingRemote = null;
   let isTyping = false;
 
+  const SYNC_KEYS = ['goals:', 'goal_streak_v1', 'po_coach_v1', 'po_coach_weights', 'po_coach_photos', 'po_coach_workout_done'];
+
   const getLocalState = () => {
     const state = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k.startsWith('goals:') || k === 'goal_streak_v1') {
+      const match = SYNC_KEYS.some(sk => k.startsWith(sk));
+      if (match) {
         state[k] = localStorage.getItem(k);
       }
     }
@@ -1609,6 +1612,12 @@ setInterval(updateDayBar, 60000);
     processStreak();
     loadToday();
     loadTomorrow();
+    
+    // Refresh Gym UI
+    if (typeof loadGymState === 'function') gymState = loadGymState();
+    if (typeof renderAll === 'function') renderAll();
+    if (typeof wtRender === 'function') wtRender();
+
     window.dispatchEvent(new CustomEvent('goals-changed'));
   };
 
@@ -1620,7 +1629,7 @@ setInterval(updateDayBar, 60000);
     lastSyncedJson = json;
     
     if (isExiting) {
-      const body = JSON.stringify({ id: APP_KEY, state });
+      const body = JSON.stringify({ key: APP_KEY, data: state });
       fetch(`${SUPABASE_URL}/rest/v1/app_state`, {
         method: 'POST',
         body,
@@ -1636,7 +1645,7 @@ setInterval(updateDayBar, 60000);
     }
 
     try {
-      await supabaseClient.from('app_state').upsert({ id: APP_KEY, state });
+      await supabaseClient.from('app_state').upsert({ key: APP_KEY, data: state });
     } catch (e) { console.error('Sync push failed:', e); }
   };
 
@@ -1651,14 +1660,16 @@ setInterval(updateDayBar, 60000);
   const originalSetItem = localStorage.setItem;
   localStorage.setItem = function(key, value) {
     originalSetItem.apply(this, arguments);
-    if (key.startsWith('goals:') || key === 'goal_streak_v1') schedulePush();
+    const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
+    if (isSyncKey) schedulePush();
     if (key.startsWith('goals:')) window.dispatchEvent(new CustomEvent('goals-changed'));
   };
 
   const originalRemoveItem = localStorage.removeItem;
   localStorage.removeItem = function(key) {
     originalRemoveItem.apply(this, arguments);
-    if (key.startsWith('goals:') || key === 'goal_streak_v1') schedulePush();
+    const isSyncKey = SYNC_KEYS.some(sk => key.startsWith(sk));
+    if (isSyncKey) schedulePush();
   };
 
   // Sync logic
@@ -1678,17 +1689,17 @@ setInterval(updateDayBar, 60000);
 
   // Initial Pull & Subscribe
   (async () => {
-    const { data } = await supabaseClient.from('app_state').select('state').eq('id', APP_KEY).single();
-    if (data && data.state) {
-      applyState(data.state);
+    const { data } = await supabaseClient.from('app_state').select('data').eq('key', APP_KEY).single();
+    if (data && data.data) {
+      applyState(data.data);
     } else if (Object.keys(getLocalState()).length > 0) {
       pushState(); // Seed remote if local exists but remote is empty
     }
 
     supabaseClient.channel(`sync:${APP_KEY}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_state', filter: `id=eq.${APP_KEY}` }, 
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_state', filter: `key=eq.${APP_KEY}` }, 
       (payload) => {
-        const newState = payload.new.state;
+        const newState = payload.new.data;
         if (JSON.stringify(newState) === lastSyncedJson) return;
         if (isTyping) pendingRemote = newState;
         else applyState(newState);
